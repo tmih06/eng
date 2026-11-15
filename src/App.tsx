@@ -69,6 +69,22 @@ function getTextWords(element: ExcalidrawTextElement): RecognizedWord[] {
   });
 }
 
+function combineWords(words: readonly RecognizedWord[]): RecognizedWord | null {
+  if (!words.length) return null;
+  const ordered = [...words].sort((a, b) =>
+    Math.abs(a.y - b.y) < Math.min(a.height, b.height) * 0.5 ? a.x - b.x : a.y - b.y,
+  );
+  const x = Math.min(...words.map((word) => word.x));
+  const y = Math.min(...words.map((word) => word.y));
+  return {
+    word: ordered.map((word) => word.word).join(" "),
+    x,
+    y,
+    width: Math.max(...words.map((word) => word.x + word.width)) - x,
+    height: Math.max(...words.map((word) => word.y + word.height)) - y,
+  };
+}
+
 function detectWordGesture(
   elements: readonly ExcalidrawElement[],
   points: readonly [number, number][],
@@ -114,18 +130,26 @@ function detectWordGesture(
     const lineY = (target: RecognizedWord) =>
       first[1] +
       ((target.x + target.width / 2 - first[0]) / (last[0] - first[0])) * (last[1] - first[1]);
-    const target = targets
+    const candidates = targets
       .filter((word) => {
         const gap = lineY(word) - (word.y + word.height);
         const overlap = Math.min(right, word.x + word.width) - Math.max(left, word.x);
         return (
           overlap >= word.width * 0.65 &&
-          width <= word.width * 1.8 &&
           gap >= -word.height * 0.1 &&
-          gap <= Math.max(word.height * 0.7, width * 0.15)
+          gap <= Math.max(word.height * 0.7, 4)
         );
       })
-      .sort((a, b) => Math.abs(lineY(a) - a.y - a.height) - Math.abs(lineY(b) - b.y - b.height))[0];
+      .sort((a, b) => Math.abs(lineY(a) - a.y - a.height) - Math.abs(lineY(b) - b.y - b.height));
+    const nearest = candidates[0];
+    const selected = combineWords(
+      candidates.filter(
+        (word) =>
+          nearest &&
+          Math.abs(word.y + word.height - nearest.y - nearest.height) < nearest.height * 0.5,
+      ),
+    );
+    const target = selected && width <= selected.width * 1.8 ? selected : null;
     const region = target
       ? {
           x: target.x - target.height * 0.1,
@@ -158,13 +182,8 @@ function detectWordGesture(
     return null;
   }
   if (points.length < 10 || width < 50 || height < 30) return null;
-  const centerDistance = (target: RecognizedWord) =>
-    Math.hypot(
-      (target.x + target.width / 2 - (left + right) / 2) / width,
-      (target.y + target.height / 2 - (top + bottom) / 2) / height,
-    );
-  const text = targets
-    .filter(
+  const text = combineWords(
+    targets.filter(
       (target) =>
         target.x + target.width / 2 >= left &&
         target.x + target.width / 2 <= right &&
@@ -172,8 +191,8 @@ function detectWordGesture(
         target.y + target.height / 2 <= bottom &&
         target.width <= width + padding * 2 &&
         target.height <= height + padding * 2,
-    )
-    .sort((first, second) => centerDistance(first) - centerDistance(second))[0];
+    ),
+  );
   const centerX = text ? text.x + text.width / 2 : (left + right) / 2;
   const centerY = text ? text.y + text.height / 2 : (top + bottom) / 2;
   const radius = text ? Math.max(text.width, text.height) / 2 : Math.max(width, height) / 2;
@@ -199,7 +218,9 @@ function detectWordGesture(
     sweptAngle += Math.atan2(Math.sin(delta), Math.cos(delta));
   }
   const intendedCircle = text
-    ? pathLength > radius * 2 && width > text.width * 1.2 && height > text.height * 1.2
+    ? pathLength > radius * 2 &&
+      width > text.width + Math.min(12, text.width * 0.2) &&
+      height > text.height * 1.2
     : pathLength > radius * 3 && Math.abs(sweptAngle) >= Math.PI * 1.3;
   if (!intendedCircle) return null;
 
@@ -341,7 +362,10 @@ function App() {
         const response = await fetch("/api/ocr", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataURL: canvas.toDataURL("image/jpeg", 0.85) }),
+          body: JSON.stringify({
+            dataURL: canvas.toDataURL("image/jpeg", 0.85),
+            selection: gesture.kind,
+          }),
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(6500)]),
         });
         if (!response.ok) {
@@ -387,21 +411,19 @@ function App() {
         const points = gesture.points.map(
           ([x, y]) => [gesture.x + x, gesture.y + y] as [number, number],
         );
+        if (points.length !== sceneGesture.current.length && lookupStarted.current) {
+          lookupController.current?.abort();
+          lookupStarted.current = false;
+          lastDetectedWord.current = undefined;
+        }
         sceneGesture.current = points;
         window.clearTimeout(lookupTimer.current);
         const nextCandidate = detectWordGesture(elements, points);
-        if (nextCandidate) {
-          if (nextCandidate.kind === "circle" || nextCandidate.word)
-            publishCandidate(nextCandidate);
-          if (
-            nextCandidate.kind === "circle" &&
-            !nextCandidate.word &&
-            nextCandidate.confidence >= 75
-          ) {
-            lookupTimer.current = window.setTimeout(() => {
-              void readGestureImage(nextCandidate);
-            }, 150);
-          }
+        if (nextCandidate?.kind === "circle") {
+          lookupTimer.current = window.setTimeout(() => {
+            if (nextCandidate.word) publishCandidate(nextCandidate);
+            else if (nextCandidate.confidence >= 75) void readGestureImage(nextCandidate);
+          }, 150);
         }
       }
       window.clearTimeout(saveTimer.current);

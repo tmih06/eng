@@ -58,7 +58,11 @@ function WordNotification({
         <div className="tst-body">
           <div className="tst-copy">
             <div className="tst-title">
-              {rich && <span className="learning-eyebrow">TỪ VỰNG · EN / VI</span>}
+              {rich && (
+                <span className="learning-eyebrow">
+                  {lesson.word.includes(" ") ? "CỤM TỪ" : "TỪ VỰNG"} · EN / VI
+                </span>
+              )}
               <span className="learning-word-title">
                 <span className="learning-word-text">{item.title}</span>
                 {rich && <PronunciationButton key={lesson.word} word={lesson.word} />}

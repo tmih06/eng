@@ -59,7 +59,7 @@ export function LearningToast({
     };
   }, [word]);
   return (
-    <div className="learning-content" aria-label={`Học từ ${word}`} lang="vi">
+    <div className="learning-content" aria-label={`Học ${word}`} lang="vi">
       <header className="learning-toast-heading">
         <div>
           {result && (
@@ -93,7 +93,7 @@ export function LearningToast({
               </ReactMarkdown>
             </section>
             <section className="learning-section">
-              <h3>Từ gần nghĩa & liên quan</h3>
+              <h3>Từ & cụm từ liên quan</h3>
               <div className="similar-words">
                 {result.similarWords.map((similar) => (
                   <button type="button" key={similar} onClick={() => onWord(similar)} lang="en">
@@ -103,7 +103,7 @@ export function LearningToast({
               </div>
             </section>
             <p className="learning-disclaimer">
-              Giải thích do AI hỗ trợ. Nghĩa của từ có thể thay đổi theo ngữ cảnh.
+              Giải thích do AI hỗ trợ. Nghĩa có thể thay đổi theo ngữ cảnh.
             </p>
           </>
         )}
@@ -125,7 +125,7 @@ export function LearningToast({
             </figcaption>
           </figure>
         ) : (
-          <div className="learning-image-placeholder">Hình ảnh không khả dụng cho từ này.</div>
+          <div className="learning-image-placeholder">Chưa có hình ảnh minh họa.</div>
         )}
       </section>
     </div>
