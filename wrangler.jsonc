@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "canvas-whiteboard",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-08",
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "BOARDS", "class_name": "BoardRoom" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }],
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true },
+  },
+}
