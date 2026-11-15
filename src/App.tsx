@@ -5,7 +5,10 @@ import type {
 } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Toaster, toast } from "@yusufceng1z/ding-react";
+import type { LearningState } from "./LearningToast";
+import { WordToaster } from "./WordToaster";
+import type { VocabularyResult } from "../shared/vocabulary";
+import { toast } from "@yusufceng1z/ding";
 import type { OcrResponse, RecognizedWord } from "../shared/ocr";
 
 interface BoardSnapshot {
@@ -18,24 +21,6 @@ interface WordGesture {
   word: string | null;
   confidence: number;
   region: Omit<RecognizedWord, "word">;
-}
-
-interface VocabularyResult {
-  word: string;
-  phonetic: string;
-  meaning: string;
-  partOfSpeech: string;
-  example: string;
-}
-
-interface DictionaryResponse {
-  word?: string;
-  phonetic?: string;
-  phonetics?: Array<{ text?: string }>;
-  meanings?: Array<{
-    partOfSpeech?: string;
-    definitions?: Array<{ definition?: string; example?: string }>;
-  }>;
 }
 
 const boardId = "default";
@@ -226,30 +211,15 @@ function detectWordGesture(
   };
 }
 
-async function lookupVocabulary(
-  word: string,
-  signal: AbortSignal,
-): Promise<VocabularyResult | null> {
-  const response = await fetch(
-    `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
-    { signal },
-  );
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error("Dictionary request failed");
-
-  const entries = (await response.json()) as DictionaryResponse[];
-  const entry = entries[0];
-  const meaning = entry?.meanings?.[0];
-  const definition = meaning?.definitions?.[0];
-  if (!entry || !meaning || !definition?.definition) return null;
-
-  return {
-    word: entry.word ?? word,
-    phonetic: entry.phonetic ?? entry.phonetics?.find((item) => item.text)?.text ?? "",
-    meaning: definition.definition,
-    partOfSpeech: meaning.partOfSpeech ?? "word",
-    example: definition.example ?? `I used “${word}” in a conversation today.`,
-  };
+async function lookupVocabulary(word: string, signal: AbortSignal): Promise<VocabularyResult> {
+  const response = await fetch("/api/word", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ word }),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(7000)]),
+  });
+  if (!response.ok) throw new Error("Không thể tải bài học cho từ này.");
+  return (await response.json()) as VocabularyResult;
 }
 
 function App() {
@@ -269,51 +239,54 @@ function App() {
   const lookupStarted = useRef(false);
 
   const [drawing, setDrawing] = useState(false);
-  const publishCandidate = useCallback((nextCandidate: WordGesture) => {
-    if (!penActive.current || !nextCandidate.word) return;
-    if (lastDetectedWord.current === nextCandidate.word) return;
-    lastDetectedWord.current = nextCandidate.word;
-    const title = `Detected “${nextCandidate.word}”`;
-    const description = "Finding a definition…";
-    if (toastId.current) {
-      toast.update(toastId.current, { type: "loading", title, description, duration: 0 });
-    } else {
-      toastId.current = toast.loading(title, { description, className: "word-toast" });
-    }
+  const [learning, setLearning] = useState<LearningState | null>(null);
+  const loadWord = useCallback((word: string) => {
     definitionController.current?.abort();
     const controller = new AbortController();
     definitionController.current = controller;
+    toastId.current = toast.loading(word, {
+      description: "Đang soạn giải thích bằng tiếng Việt…",
+      className: "learning-notification",
+    });
     const id = toastId.current;
-    void lookupVocabulary(nextCandidate.word, controller.signal)
+    setLearning({ word, result: null, error: null });
+    void lookupVocabulary(word, controller.signal)
       .then((result) => {
-        if (controller.signal.aborted) return;
-        if (!result) {
+        if (!controller.signal.aborted) {
+          setLearning({ word, result, error: null });
           toast.update(id, {
-            type: "warning",
-            title: nextCandidate.word ?? "Word not found",
-            description: "No definition found. Try circling or underlining one word at a time.",
+            type: "success",
+            title: word,
+            description: "Bài học tiếng Việt đã sẵn sàng.",
             duration: 0,
           });
-          return;
         }
-        toast.update(id, {
-          type: "success",
-          title: result.word,
-          meta: [result.phonetic, result.partOfSpeech].filter(Boolean).join(" · "),
-          description: `${result.meaning}\n\nExample: ${result.example}`,
-          duration: 0,
-        });
       })
       .catch(() => {
-        if (!controller.signal.aborted)
+        if (!controller.signal.aborted) {
+          setLearning({
+            word,
+            result: null,
+            error: "Chưa tải được giải thích. Hãy khoanh tròn hoặc gạch chân lại để thử lại.",
+          });
           toast.update(id, {
             type: "error",
-            title: "Definition unavailable",
-            description: "Could not fetch the definition. Circle or underline again to retry.",
+            title: word,
+            description: "Chưa tải được giải thích.",
             duration: 0,
           });
+        }
       });
   }, []);
+  const publishCandidate = useCallback(
+    (nextCandidate: WordGesture) => {
+      if (!penActive.current || !nextCandidate.word) return;
+      if (lastDetectedWord.current === nextCandidate.word) return;
+      lastDetectedWord.current = nextCandidate.word;
+      loadWord(nextCandidate.word);
+    },
+    [loadWord],
+  );
   const readGestureImage = useCallback(
     async (gesture: WordGesture) => {
       if (lookupStarted.current || gesture.word || lastDetectedWord.current || !penActive.current)
@@ -372,9 +345,10 @@ function App() {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(6500)]),
         });
         if (!response.ok) {
-          const result = (await response.json()) as { error?: string };
           throw new Error(
-            result.error ?? "Word lookup failed. Circle or underline again to retry.",
+            response.status === 429
+              ? "Đã đạt giới hạn lượt đọc ảnh. Vui lòng đợi một lát rồi thử lại."
+              : "Chưa đọc được từ trong ảnh. Hãy khoanh tròn hoặc gạch chân lại.",
           );
         }
         const { word } = (await response.json()) as OcrResponse;
@@ -383,10 +357,10 @@ function App() {
         publishCandidate({ ...gesture, word });
       } catch (error) {
         if (controller.signal.aborted) return;
-        toastId.current = toast.error("Word lookup failed", {
+        toastId.current = toast.error("Chưa đọc được từ", {
           className: "word-toast",
           description:
-            error instanceof Error ? error.message : "Circle or underline again to retry.",
+            error instanceof Error ? error.message : "Hãy khoanh tròn hoặc gạch chân lại.",
         });
       }
     },
@@ -402,6 +376,7 @@ function App() {
         window.clearTimeout(lookupTimer.current);
         lookupController.current?.abort();
         definitionController.current?.abort();
+        setLearning((current) => (current?.result ? current : null));
         if (toast.getState().toasts.some((item) => item.type === "loading")) toast.dismiss();
       }
       penActive.current = isPen;
@@ -446,8 +421,10 @@ function App() {
     setDrawing(true);
     sceneGesture.current = [];
     definitionController.current?.abort();
+    setLearning((current) => (current?.result ? current : null));
     if (toastId.current && toast.getState().toasts.some((item) => item.type === "loading")) {
       toast.dismiss(toastId.current);
+      setLearning(null);
     }
     lastDetectedWord.current = undefined;
     toastId.current = null;
@@ -485,6 +462,7 @@ function App() {
         <section className="canvas-stage" aria-label="Whiteboard canvas">
           <Excalidraw
             initialData={initialData}
+            langCode="vi-VN"
             excalidrawAPI={(api) => {
               excalidraw.current = api;
             }}
@@ -492,8 +470,8 @@ function App() {
               <button
                 type="button"
                 className={`help-icon canvas-help-button${isMobile ? " canvas-help-button--mobile" : ""}`}
-                aria-label="Keyboard shortcuts"
-                title="Keyboard shortcuts (?)"
+                aria-label="Phím tắt"
+                title="Phím tắt (?)"
                 onClick={() =>
                   excalidraw.current?.updateScene({ appState: { openDialog: { name: "help" } } })
                 }
@@ -518,17 +496,16 @@ function App() {
           />
         </section>
       </main>
-      <div
-        className="word-toaster"
-        data-drawing={drawing}
-        onPointerDownCapture={(event) => {
-          if (event.target instanceof Element && event.target.closest(".tst-desc")) {
-            event.stopPropagation();
-          }
+      <WordToaster
+        lesson={learning}
+        drawing={drawing}
+        onWord={loadWord}
+        onClose={() => {
+          definitionController.current?.abort();
+          window.speechSynthesis?.cancel();
+          setLearning(null);
         }}
-      >
-        <Toaster position="bottom-right" theme="light" />
-      </div>
+      />
     </>
   );
 }

@@ -65,6 +65,316 @@ body {
   grid-row: 2;
 }
 
+.word-toaster .tst-viewport {
+  --tst-radius: 26px;
+  --tst-shadow:
+    0 0 0 1px rgba(35, 28, 50, 0.07), 0 12px 28px -12px rgba(32, 22, 51, 0.16),
+    0 32px 80px -24px rgba(32, 22, 51, 0.24);
+}
+
+.tst.learning-notification .tst-body {
+  inset-inline-start: 22px;
+  padding-inline-end: 0;
+}
+
+.tst.learning-notification .tst-copy {
+  width: min(400px, calc(100vw - 76px));
+  max-width: none;
+  padding: 22px 0 24px;
+}
+
+.tst.learning-notification .tst-icon {
+  inset-inline-start: auto;
+  right: 56px;
+  top: 15px;
+  width: 30px;
+  height: 30px;
+}
+
+.tst.learning-notification .tst-title {
+  padding-right: 76px;
+  color: #26212e;
+  font-size: 32px;
+  line-height: 1.15;
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  overflow-wrap: anywhere;
+}
+
+.learning-eyebrow {
+  display: block;
+  margin-bottom: 10px;
+  color: #9a90aa;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.16em;
+}
+
+.tst.learning-notification .tst-desc {
+  opacity: 1;
+}
+
+.tst.learning-notification .tst-close {
+  position: absolute;
+  top: 16px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  border: 1px solid #eeeaf2;
+  border-radius: 50%;
+  color: #9a90a7;
+  background: #faf8fc;
+  cursor: pointer;
+  opacity: 1;
+}
+
+.tst.learning-notification .tst-close:hover {
+  color: #554569;
+  background: #f0ebf7;
+}
+.tst.learning-notification .tst-close:active {
+  transform: scale(0.94);
+}
+
+.learning-content {
+  user-select: text;
+  color: #302b39;
+}
+.learning-toast-heading {
+  margin-top: 7px;
+}
+.learning-meta {
+  color: #9a8ba9;
+  font-size: 12px;
+  font-weight: 450;
+}
+
+.learning-word-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.learning-word-text {
+  min-width: 0;
+}
+
+.pronunciation-control {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.pronunciation-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #ece4f4;
+  border-radius: 50%;
+  background: #f8f4fc;
+  color: #9778ac;
+  cursor: pointer;
+}
+.pronunciation-button:hover,
+.pronunciation-button[aria-pressed="true"] {
+  background: #ede3f5;
+  color: #68457e;
+}
+.pronunciation-button[aria-busy="true"] {
+  opacity: 0.6;
+}
+.pronunciation-button:active {
+  transform: scale(0.94);
+}
+.pronunciation-button:focus-visible,
+.similar-words button:focus-visible,
+.tst.learning-notification .tst-close:focus-visible {
+  outline: 2px solid #b49bcd;
+  outline-offset: 3px;
+}
+.pronunciation-error {
+  position: absolute;
+  z-index: 1;
+  top: 38px;
+  right: 0;
+  width: 190px;
+  padding: 8px 10px;
+  border: 1px solid #eee3ed;
+  border-radius: 9px;
+  background: #fff;
+  color: #a45f7e;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+}
+
+.learning-section {
+  margin-top: 24px;
+}
+.learning-section h3 {
+  margin: 0 0 9px;
+  color: #a195ac;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.learning-section p,
+.learning-markdown ul,
+.learning-markdown ol {
+  margin: 7px 0;
+  color: #6a6174;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.learning-section strong {
+  color: #493956;
+  font-weight: 600;
+}
+.learning-markdown ul,
+.learning-markdown ol {
+  padding-left: 17px;
+}
+.learning-markdown li + li {
+  margin-top: 5px;
+}
+.learning-markdown blockquote {
+  margin: 8px 0;
+  padding-left: 13px;
+  border-left: 2px solid #cbb8de;
+}
+.learning-markdown blockquote p {
+  color: #5b426f;
+  font-style: italic;
+}
+.learning-markdown h1,
+.learning-markdown h2,
+.learning-markdown h3,
+.learning-markdown h4 {
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #56415f;
+}
+.learning-content pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.learning-section code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #f1ebf7;
+}
+.learning-example {
+  padding: 15px 16px;
+  border: 1px solid #f0eaf7;
+  border-radius: 15px;
+  background: #faf7fd;
+}
+.learning-example h3 {
+  color: #a58ab9;
+}
+
+.similar-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.similar-words button {
+  padding: 6px 10px;
+  border: 1px solid #ebe3f2;
+  border-radius: 8px;
+  color: #9374aa;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.similar-words button:hover {
+  color: #624178;
+  background: #f6f0fb;
+}
+.learning-image {
+  display: block;
+  width: 100%;
+  height: 160px;
+  margin: 10px 0 7px;
+  border-radius: 14px;
+  object-fit: cover;
+  background: #f2eef6;
+}
+.learning-figure {
+  margin: 0;
+}
+.learning-figure figcaption {
+  font-size: 9px;
+  line-height: 1.4;
+}
+.learning-figure a {
+  color: #aaa0b2;
+  text-decoration-color: #ded6e6;
+  text-underline-offset: 3px;
+}
+.learning-image-placeholder {
+  padding: 14px;
+  border: 1px dashed #e7dfed;
+  border-radius: 11px;
+  color: #b1a6b9;
+  font-size: 11px;
+}
+.learning-loading,
+.learning-notice {
+  padding: 18px 0;
+  color: #a18bab;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.learning-disclaimer {
+  margin: 16px 0 0;
+  color: #b3a9be;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+@media (max-height: 850px) {
+  .tst.learning-notification .tst-copy {
+    padding-block: 18px;
+  }
+  .learning-section {
+    margin-top: 17px;
+  }
+  .learning-section p,
+  .learning-markdown ul,
+  .learning-markdown ol {
+    line-height: 1.55;
+  }
+  .learning-image {
+    height: 120px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tst.learning-notification .tst-title {
+    font-size: 28px;
+  }
+  .learning-section {
+    margin-top: 16px;
+  }
+  .learning-section p,
+  .learning-markdown ul,
+  .learning-markdown ol {
+    font-size: 12px;
+  }
+  .learning-image {
+    height: 110px;
+  }
+}
+
 .word-toaster .tst-slot {
   touch-action: pan-y;
 }
@@ -76,9 +386,5 @@ body {
 .tst.word-toast .tst-desc {
   white-space: pre-line;
   line-height: 1.5;
-  max-height: 55vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
   user-select: text;
 }
