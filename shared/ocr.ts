@@ -8,4 +8,5 @@ export interface RecognizedWord {
 
 export interface OcrResponse {
   word: string;
+  contextSentence: string;
 }

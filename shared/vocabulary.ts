@@ -2,8 +2,12 @@ export interface VocabularyResult {
   word: string;
   phonetic: string;
   partOfSpeech: string;
-  meaningMarkdown: string;
-  exampleMarkdown: string;
+  meaning: string;
+  usageNotes: string[];
+  example: {
+    english: string;
+    vietnamese: string;
+  };
   similarWords: string[];
 }
 

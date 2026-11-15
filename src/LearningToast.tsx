@@ -2,23 +2,7 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { VocabularyResult, WordImage } from "../shared/vocabulary";
 
-const markdownElements = [
-  "p",
-  "strong",
-  "em",
-  "ul",
-  "ol",
-  "li",
-  "blockquote",
-  "code",
-  "pre",
-  "hr",
-  "br",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-];
+const markdownElements = ["p", "strong", "em", "code", "br"];
 
 export interface LearningState {
   word: string;
@@ -83,13 +67,27 @@ export function LearningToast({
             <section className="learning-section learning-markdown">
               <h3>Nghĩa & cách dùng</h3>
               <ReactMarkdown skipHtml allowedElements={markdownElements}>
-                {result.meaningMarkdown}
+                {result.meaning}
               </ReactMarkdown>
+              <ul>
+                {result.usageNotes.map((note) => (
+                  <li key={note}>
+                    <ReactMarkdown skipHtml allowedElements={markdownElements}>
+                      {note}
+                    </ReactMarkdown>
+                  </li>
+                ))}
+              </ul>
             </section>
             <section className="learning-section learning-example learning-markdown">
               <h3>Ví dụ thực tế</h3>
+              <blockquote lang="en">
+                <ReactMarkdown skipHtml allowedElements={markdownElements}>
+                  {result.example.english}
+                </ReactMarkdown>
+              </blockquote>
               <ReactMarkdown skipHtml allowedElements={markdownElements}>
-                {result.exampleMarkdown}
+                {result.example.vietnamese}
               </ReactMarkdown>
             </section>
             <section className="learning-section">

@@ -1,6 +1,7 @@
 import { Excalidraw, FONT_FAMILY } from "@excalidraw/excalidraw";
 import type {
   ExcalidrawElement,
+  ExcalidrawImageElement,
   ExcalidrawTextElement,
 } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
@@ -167,10 +168,10 @@ function detectWordGesture(
       (element) =>
         !element.isDeleted &&
         element.type === "image" &&
-        region.x + region.width / 2 >= element.x &&
-        region.x + region.width / 2 <= element.x + element.width &&
-        region.y + region.height / 2 >= element.y &&
-        region.y + region.height / 2 <= element.y + element.height,
+        (left + right) / 2 >= element.x &&
+        (left + right) / 2 <= element.x + element.width &&
+        (first[1] + last[1]) / 2 >= element.y &&
+        (first[1] + last[1]) / 2 <= element.y + element.height,
     );
     if (target || overImage)
       return {
@@ -232,11 +233,74 @@ function detectWordGesture(
   };
 }
 
-async function lookupVocabulary(word: string, signal: AbortSignal): Promise<VocabularyResult> {
+async function captureGestureImage(
+  image: ExcalidrawImageElement,
+  dataURL: string,
+  region: WordGesture["region"],
+  points: readonly [number, number][],
+): Promise<string> {
+  const source = new Image();
+  source.src = dataURL;
+  await source.decode();
+  // Include the full text-line width and neighboring lines, not just the guessed word box.
+  const paddingY = Math.max(region.height * 0.5, image.height * 0.08);
+  const left = Math.min(image.x, ...points.map(([x]) => x - 4));
+  const right = Math.max(image.x + image.width, ...points.map(([x]) => x + 4));
+  const top = Math.min(Math.max(image.y, region.y - paddingY), ...points.map(([, y]) => y - 4));
+  const bottom = Math.max(
+    Math.min(image.y + image.height, region.y + region.height + paddingY),
+    ...points.map(([, y]) => y + 4),
+  );
+  const width = right - left;
+  const height = bottom - top;
+  const canvas = document.createElement("canvas");
+  const scale = Math.min(3, 1280 / Math.max(width, height));
+  canvas.width = Math.ceil(width * scale);
+  canvas.height = Math.ceil(height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare the selected image region");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.scale(scale, scale);
+  context.translate(-left, -top);
+  context.save();
+  context.translate(image.x + image.width / 2, image.y + image.height / 2);
+  context.rotate(image.angle);
+  context.scale(image.scale[0], image.scale[1]);
+  const crop = image.crop;
+  context.drawImage(
+    source,
+    crop?.x ?? 0,
+    crop?.y ?? 0,
+    crop?.width ?? source.naturalWidth,
+    crop?.height ?? source.naturalHeight,
+    -image.width / 2,
+    -image.height / 2,
+    image.width,
+    image.height,
+  );
+  context.restore();
+  // Keep the real stroke geometry, but distinguish this selection from marks in the image.
+  context.strokeStyle = "#d000ff";
+  context.lineWidth = 2.5 / scale;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  context.moveTo(points[0][0], points[0][1]);
+  for (const [x, y] of points.slice(1)) context.lineTo(x, y);
+  context.stroke();
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+async function lookupVocabulary(
+  word: string,
+  signal: AbortSignal,
+  contextSentence = "",
+): Promise<VocabularyResult> {
   const response = await fetch("/api/word", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ word }),
+    body: JSON.stringify({ word, contextSentence }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(7000)]),
   });
   if (!response.ok) throw new Error("Không thể tải bài học cho từ này.");
@@ -261,7 +325,7 @@ function App() {
 
   const [drawing, setDrawing] = useState(false);
   const [learning, setLearning] = useState<LearningState | null>(null);
-  const loadWord = useCallback((word: string) => {
+  const loadWord = useCallback((word: string, contextSentence = "") => {
     definitionController.current?.abort();
     const controller = new AbortController();
     definitionController.current = controller;
@@ -271,7 +335,7 @@ function App() {
     });
     const id = toastId.current;
     setLearning({ word, result: null, error: null });
-    void lookupVocabulary(word, controller.signal)
+    void lookupVocabulary(word, controller.signal, contextSentence)
       .then((result) => {
         if (!controller.signal.aborted) {
           setLearning({ word, result, error: null });
@@ -300,11 +364,11 @@ function App() {
       });
   }, []);
   const publishCandidate = useCallback(
-    (nextCandidate: WordGesture) => {
+    (nextCandidate: WordGesture, contextSentence = "") => {
       if (!penActive.current || !nextCandidate.word) return;
       if (lastDetectedWord.current === nextCandidate.word) return;
       lastDetectedWord.current = nextCandidate.word;
-      loadWord(nextCandidate.word);
+      loadWord(nextCandidate.word, contextSentence);
     },
     [loadWord],
   );
@@ -312,17 +376,24 @@ function App() {
     async (gesture: WordGesture) => {
       if (lookupStarted.current || gesture.word || lastDetectedWord.current || !penActive.current)
         return;
-      const { x: left, y: top, width, height } = gesture.region;
+      const points = [...sceneGesture.current];
+      if (points.length < 2) return;
+      const region = gesture.region;
+      const centerX = region.x + region.width / 2;
+      const centerY =
+        gesture.kind === "underline"
+          ? (points[0][1] + points[points.length - 1][1]) / 2
+          : region.y + region.height / 2;
       const image = [...sceneElements.current]
         .reverse()
         .find(
           (element) =>
             !element.isDeleted &&
             element.type === "image" &&
-            left + width / 2 >= element.x &&
-            left + width / 2 <= element.x + element.width &&
-            top + height / 2 >= element.y &&
-            top + height / 2 <= element.y + element.height,
+            centerX >= element.x &&
+            centerX <= element.x + element.width &&
+            centerY >= element.y &&
+            centerY <= element.y + element.height,
         );
       if (image?.type !== "image" || !image.fileId) return;
       const file = sceneFiles.current[image.fileId];
@@ -331,39 +402,13 @@ function App() {
       const controller = new AbortController();
       lookupController.current = controller;
       try {
-        const source = new Image();
-        source.src = file.dataURL;
-        await source.decode();
+        const dataURL = await captureGestureImage(image, file.dataURL, region, points);
         if (controller.signal.aborted) return;
-        const canvas = document.createElement("canvas");
-        const scale = Math.min(3, 512 / Math.max(width, height));
-        canvas.width = Math.ceil(width * scale);
-        canvas.height = Math.ceil(height * scale);
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Could not prepare the selected image region");
-        context.fillStyle = "#fff";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.scale(scale, scale);
-        context.translate(image.x + image.width / 2 - left, image.y + image.height / 2 - top);
-        context.rotate(image.angle);
-        context.scale(image.scale[0], image.scale[1]);
-        const crop = image.crop;
-        context.drawImage(
-          source,
-          crop?.x ?? 0,
-          crop?.y ?? 0,
-          crop?.width ?? source.naturalWidth,
-          crop?.height ?? source.naturalHeight,
-          -image.width / 2,
-          -image.height / 2,
-          image.width,
-          image.height,
-        );
         const response = await fetch("/api/ocr", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            dataURL: canvas.toDataURL("image/jpeg", 0.85),
+            dataURL,
             selection: gesture.kind,
           }),
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(6500)]),
@@ -375,10 +420,10 @@ function App() {
               : "Chưa đọc được từ trong ảnh. Hãy khoanh tròn hoặc gạch chân lại.",
           );
         }
-        const { word } = (await response.json()) as OcrResponse;
+        const { word, contextSentence } = (await response.json()) as OcrResponse;
         if (controller.signal.aborted || !penActive.current) return;
         if (!word) return;
-        publishCandidate({ ...gesture, word });
+        publishCandidate({ ...gesture, word }, contextSentence);
       } catch (error) {
         if (controller.signal.aborted) return;
         toastId.current = toast.error("Chưa đọc được từ", {
