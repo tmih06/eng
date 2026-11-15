@@ -1,2 +1,4 @@
 # Server-side only. Copy to .dev.vars and restart local development.
-GEMINI_API_KEY="replace-with-your-google-ai-studio-key"
+GROQ_API_KEY="replace-with-your-primary-groq-key"
+GROQ_API_KEY_2="replace-with-your-fallback-groq-key"
+GROQ_API_KEY_3="replace-with-your-fallback-groq-key"

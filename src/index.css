@@ -37,12 +37,36 @@ body {
   background: #fff;
 }
 
-.word-toaster .tst-slot {
-  touch-action: pan-y;
+.excalidraw .layer-ui__wrapper__footer-right .help-icon {
+  display: none;
 }
 
-.word-toaster .tst-viewport[data-position="bottom-right"] .tst-slot {
-  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+.excalidraw .App-toolbar-container:has(.canvas-help-button--mobile) {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  column-gap: 0.5rem;
+  row-gap: 1.25rem;
+}
+
+.excalidraw .App-toolbar-container:has(.canvas-help-button--mobile) .App-toolbar--mobile {
+  grid-column: 1 / -1;
+}
+
+.excalidraw .canvas-help-button--mobile {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  margin-top: 1px;
+}
+
+.excalidraw .App-toolbar-container:has(.canvas-help-button--mobile) .mobile-misc-tools-container {
+  position: static;
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.word-toaster .tst-slot {
+  touch-action: pan-y;
 }
 
 .word-toaster[data-drawing="true"] .tst-slot {
