@@ -238,6 +238,7 @@ async function captureGestureImage(
   dataURL: string,
   region: WordGesture["region"],
   points: readonly [number, number][],
+  kind: WordGesture["kind"],
 ): Promise<string> {
   const source = new Image();
   source.src = dataURL;
@@ -247,10 +248,14 @@ async function captureGestureImage(
   const left = Math.min(image.x, ...points.map(([x]) => x - 4));
   const right = Math.max(image.x + image.width, ...points.map(([x]) => x + 4));
   const top = Math.min(Math.max(image.y, region.y - paddingY), ...points.map(([, y]) => y - 4));
-  const bottom = Math.max(
-    Math.min(image.y + image.height, region.y + region.height + paddingY),
-    ...points.map(([, y]) => y + 4),
-  );
+  const strokeBottom = Math.max(...points.map(([, y]) => y + 4));
+  const bottom =
+    kind === "underline"
+      ? strokeBottom
+      : Math.max(
+          Math.min(image.y + image.height, region.y + region.height + paddingY),
+          strokeBottom,
+        );
   const width = right - left;
   const height = bottom - top;
   const canvas = document.createElement("canvas");
@@ -264,6 +269,18 @@ async function captureGestureImage(
   context.scale(scale, scale);
   context.translate(-left, -top);
   context.save();
+  if (kind === "underline") {
+    const ordered = points[0][0] <= points[points.length - 1][0] ? points : [...points].reverse();
+    // Remove below-line text from the evidence instead of asking the model to ignore it.
+    context.beginPath();
+    context.moveTo(left, top);
+    context.lineTo(right, top);
+    context.lineTo(right, ordered[ordered.length - 1][1]);
+    for (const [x, y] of [...ordered].reverse()) context.lineTo(x, y);
+    context.lineTo(left, ordered[0][1]);
+    context.closePath();
+    context.clip();
+  }
   context.translate(image.x + image.width / 2, image.y + image.height / 2);
   context.rotate(image.angle);
   context.scale(image.scale[0], image.scale[1]);
@@ -402,7 +419,13 @@ function App() {
       const controller = new AbortController();
       lookupController.current = controller;
       try {
-        const dataURL = await captureGestureImage(image, file.dataURL, region, points);
+        const dataURL = await captureGestureImage(
+          image,
+          file.dataURL,
+          region,
+          points,
+          gesture.kind,
+        );
         if (controller.signal.aborted) return;
         const response = await fetch("/api/ocr", {
           method: "POST",
