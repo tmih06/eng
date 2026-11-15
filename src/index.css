@@ -36,3 +36,25 @@ body {
 .canvas-stage {
   background: #fff;
 }
+
+.word-toaster .tst-slot {
+  touch-action: pan-y;
+}
+
+.word-toaster .tst-viewport[data-position="bottom-right"] .tst-slot {
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+}
+
+.word-toaster[data-drawing="true"] .tst-slot {
+  pointer-events: none;
+}
+
+.tst.word-toast .tst-desc {
+  white-space: pre-line;
+  line-height: 1.5;
+  max-height: 55vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  user-select: text;
+}

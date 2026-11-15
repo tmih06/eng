@@ -1,12 +1,41 @@
-import { Excalidraw } from "@excalidraw/excalidraw";
-import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
-import type { BinaryFiles } from "@excalidraw/excalidraw/types";
-import { Agentation } from "agentation";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { Excalidraw, FONT_FAMILY } from "@excalidraw/excalidraw";
+import type {
+  ExcalidrawElement,
+  ExcalidrawTextElement,
+} from "@excalidraw/excalidraw/element/types";
+import type { AppState, BinaryFiles } from "@excalidraw/excalidraw/types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Toaster, toast } from "@yusufceng1z/ding-react";
+import type { OcrResponse, RecognizedWord } from "../shared/ocr";
 
 interface BoardSnapshot {
   elements: readonly ExcalidrawElement[];
   files: BinaryFiles;
+}
+
+interface WordGesture {
+  kind: "circle" | "underline";
+  word: string | null;
+  confidence: number;
+  region: Omit<RecognizedWord, "word">;
+}
+
+interface VocabularyResult {
+  word: string;
+  phonetic: string;
+  meaning: string;
+  partOfSpeech: string;
+  example: string;
+}
+
+interface DictionaryResponse {
+  word?: string;
+  phonetic?: string;
+  phonetics?: Array<{ text?: string }>;
+  meanings?: Array<{
+    partOfSpeech?: string;
+    definitions?: Array<{ definition?: string; example?: string }>;
+  }>;
 }
 
 const boardId = "default";
@@ -28,18 +57,493 @@ async function saveBoard(
   });
 }
 
+function getTextWords(element: ExcalidrawTextElement): RecognizedWord[] {
+  const lines = element.text.split("\n");
+  const context = document.createElement("canvas").getContext("2d");
+  const family = Object.entries(FONT_FAMILY).find(([, value]) => value === element.fontFamily)?.[0];
+  if (context) context.font = `${element.fontSize}px "${family}", sans-serif`;
+  const measure = (text: string) => context?.measureText(text).width ?? text.length;
+  const maxWidth = Math.max(...lines.map(measure), 1);
+  const scale = element.width / maxWidth;
+  const height = element.height / lines.length;
+  return lines.flatMap((line, row) => {
+    const lineWidth = measure(line) * scale;
+    const offset =
+      element.textAlign === "center"
+        ? (element.width - lineWidth) / 2
+        : element.textAlign === "right"
+          ? element.width - lineWidth
+          : 0;
+    return [...line.matchAll(/[a-zA-Z]+(?:['-][a-zA-Z]+)*/g)].map((match) => ({
+      word: match[0],
+      x: element.x + offset + measure(line.slice(0, match.index)) * scale,
+      y: element.y + row * height,
+      width: measure(match[0]) * scale,
+      height,
+    }));
+  });
+}
+
+function detectWordGesture(
+  elements: readonly ExcalidrawElement[],
+  points: readonly [number, number][],
+  recognizedWords: readonly RecognizedWord[] = [],
+): WordGesture | null {
+  if (points.length < 2) return null;
+
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const left = Math.min(...xs);
+  const right = Math.max(...xs);
+  const top = Math.min(...ys);
+  const bottom = Math.max(...ys);
+  const width = right - left;
+  const height = bottom - top;
+  const padding = Math.max(20, Math.min(width, height) * 0.08);
+  const targets: RecognizedWord[] = [
+    ...[...elements]
+      .reverse()
+      .filter((element) => !element.isDeleted && element.type === "text")
+      .flatMap((element) => (element.type === "text" ? getTextWords(element) : [])),
+    ...recognizedWords,
+  ].filter((target) => target.word);
+  const first = points[0];
+  const last = points[points.length - 1];
+  const pathLength = points.slice(1).reduce((length, [x, y], index) => {
+    const previous = points[index];
+    return length + Math.hypot(x - previous[0], y - previous[1]);
+  }, 0);
+  const chordLength = Math.hypot(last[0] - first[0], last[1] - first[1]);
+  const isUnderline =
+    width >= 12 &&
+    Math.abs(last[0] - first[0]) >= width * 0.9 &&
+    Math.abs(last[1] - first[1]) <= Math.max(4, width * 0.15) &&
+    pathLength <= chordLength * 1.15 &&
+    points.every(
+      ([x, y]) =>
+        Math.abs((last[0] - first[0]) * (first[1] - y) - (first[0] - x) * (last[1] - first[1])) /
+          Math.max(chordLength, 1) <=
+        Math.max(3, width * 0.06),
+    );
+  if (isUnderline) {
+    const lineY = (target: RecognizedWord) =>
+      first[1] +
+      ((target.x + target.width / 2 - first[0]) / (last[0] - first[0])) * (last[1] - first[1]);
+    const target = targets
+      .filter((word) => {
+        const gap = lineY(word) - (word.y + word.height);
+        const overlap = Math.min(right, word.x + word.width) - Math.max(left, word.x);
+        return (
+          overlap >= word.width * 0.65 &&
+          width <= word.width * 1.8 &&
+          gap >= -word.height * 0.1 &&
+          gap <= Math.max(word.height * 0.7, width * 0.15)
+        );
+      })
+      .sort((a, b) => Math.abs(lineY(a) - a.y - a.height) - Math.abs(lineY(b) - b.y - b.height))[0];
+    const region = target
+      ? {
+          x: target.x - target.height * 0.1,
+          y: target.y - target.height * 0.1,
+          width: target.width + target.height * 0.2,
+          height: target.height * 1.2,
+        }
+      : {
+          x: left - width * 0.05,
+          y: (first[1] + last[1]) / 2 - width * 0.6,
+          width: width * 1.1,
+          height: width * 0.6,
+        };
+    const overImage = elements.some(
+      (element) =>
+        !element.isDeleted &&
+        element.type === "image" &&
+        region.x + region.width / 2 >= element.x &&
+        region.x + region.width / 2 <= element.x + element.width &&
+        region.y + region.height / 2 >= element.y &&
+        region.y + region.height / 2 <= element.y + element.height,
+    );
+    if (target || overImage)
+      return {
+        kind: "underline",
+        word: target?.word ?? null,
+        confidence: Math.round((chordLength / pathLength) * 100),
+        region,
+      };
+    return null;
+  }
+  if (points.length < 10 || width < 50 || height < 30) return null;
+  const centerDistance = (target: RecognizedWord) =>
+    Math.hypot(
+      (target.x + target.width / 2 - (left + right) / 2) / width,
+      (target.y + target.height / 2 - (top + bottom) / 2) / height,
+    );
+  const text = targets
+    .filter(
+      (target) =>
+        target.x + target.width / 2 >= left &&
+        target.x + target.width / 2 <= right &&
+        target.y + target.height / 2 >= top &&
+        target.y + target.height / 2 <= bottom &&
+        target.width <= width + padding * 2 &&
+        target.height <= height + padding * 2,
+    )
+    .sort((first, second) => centerDistance(first) - centerDistance(second))[0];
+  const centerX = text ? text.x + text.width / 2 : (left + right) / 2;
+  const centerY = text ? text.y + text.height / 2 : (top + bottom) / 2;
+  const radius = text ? Math.max(text.width, text.height) / 2 : Math.max(width, height) / 2;
+  const coveredBins = new Set(
+    points.map(([x, y]) => {
+      const angle = Math.atan2(y - centerY, x - centerX);
+      return Math.floor(((angle + Math.PI) / (Math.PI * 2)) * 16) % 16;
+    }),
+  );
+  let longestArc = 0;
+  for (let start = 0; start < 16; start++) {
+    let arc = 0;
+    while (arc < 16 && coveredBins.has((start + arc) % 16)) arc++;
+    longestArc = Math.max(longestArc, arc);
+  }
+  let sweptAngle = 0;
+  for (let index = 1; index < points.length; index++) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const delta =
+      Math.atan2(current[1] - centerY, current[0] - centerX) -
+      Math.atan2(previous[1] - centerY, previous[0] - centerX);
+    sweptAngle += Math.atan2(Math.sin(delta), Math.cos(delta));
+  }
+  const intendedCircle = text
+    ? pathLength > radius * 2 && width > text.width * 1.2 && height > text.height * 1.2
+    : pathLength > radius * 3 && Math.abs(sweptAngle) >= Math.PI * 1.3;
+  if (!intendedCircle) return null;
+
+  return {
+    kind: "circle",
+    word: text?.word ?? null,
+    confidence: Math.round((longestArc / 16) * 100),
+    region: { x: left, y: top, width, height },
+  };
+}
+
+async function lookupVocabulary(
+  word: string,
+  signal: AbortSignal,
+): Promise<VocabularyResult | null> {
+  const response = await fetch(
+    `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
+    { signal },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("Dictionary request failed");
+
+  const entries = (await response.json()) as DictionaryResponse[];
+  const entry = entries[0];
+  const meaning = entry?.meanings?.[0];
+  const definition = meaning?.definitions?.[0];
+  if (!entry || !meaning || !definition?.definition) return null;
+
+  return {
+    word: entry.word ?? word,
+    phonetic: entry.phonetic ?? entry.phonetics?.find((item) => item.text)?.text ?? "",
+    meaning: definition.definition,
+    partOfSpeech: meaning.partOfSpeech ?? "word",
+    example: definition.example ?? `I used “${word}” in a conversation today.`,
+  };
+}
+
 function App() {
   const initialData = useMemo(() => loadBoard().catch(() => null), []);
   const saveTimer = useRef<number | undefined>(undefined);
-  const handleChange = useCallback((elements: readonly ExcalidrawElement[], files: BinaryFiles) => {
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => {
-      void saveBoard(elements, files);
-    }, 500);
+  const sceneElements = useRef<readonly ExcalidrawElement[]>([]);
+  const gestureActive = useRef(false);
+  const penActive = useRef(false);
+  const lastDetectedWord = useRef<string | null | undefined>(undefined);
+  const toastId = useRef<string | null>(null);
+  const definitionController = useRef<AbortController | null>(null);
+  const recognizedWords = useRef<RecognizedWord[]>([]);
+  const imageWords = useRef(new Map<string, RecognizedWord[]>());
+  const sceneFiles = useRef<BinaryFiles>({});
+  const sceneGesture = useRef<[number, number][]>([]);
+  const lookupTimer = useRef<number | undefined>(undefined);
+  const lookupController = useRef<AbortController | null>(null);
+  const lookupStarted = useRef(false);
+
+  const [drawing, setDrawing] = useState(false);
+  const updateImageWords = useCallback(() => {
+    recognizedWords.current = sceneElements.current.flatMap((element) => {
+      if (element.isDeleted || element.type !== "image" || !element.fileId) return [];
+      return (imageWords.current.get(element.fileId) ?? []).map((word) => ({
+        word: word.word,
+        x: element.x + word.x * element.width,
+        y: element.y + word.y * element.height,
+        width: word.width * element.width,
+        height: word.height * element.height,
+      }));
+    });
   }, []);
+  const publishCandidate = useCallback((nextCandidate: WordGesture) => {
+    if (!penActive.current) return;
+    if (lastDetectedWord.current === nextCandidate.word) return;
+    if (!nextCandidate.word && lastDetectedWord.current) return;
+    lastDetectedWord.current = nextCandidate.word;
+    const title = nextCandidate.word
+      ? `Detected “${nextCandidate.word}”`
+      : nextCandidate.kind === "circle"
+        ? "Circle detected"
+        : "Underline detected";
+    const description = nextCandidate.word
+      ? "Finding a definition…"
+      : "Circle or underline a word to look it up.";
+    if (toastId.current) {
+      toast.update(toastId.current, {
+        type: nextCandidate.word ? "loading" : "info",
+        title,
+        description,
+        duration: nextCandidate.word ? 0 : 4000,
+      });
+    } else {
+      toastId.current = toast.show(nextCandidate.word ? "loading" : "info", title, {
+        description,
+        duration: nextCandidate.word ? 0 : 4000,
+        className: "word-toast",
+      });
+    }
+    if (!nextCandidate.word) return;
+    definitionController.current?.abort();
+    const controller = new AbortController();
+    definitionController.current = controller;
+    const id = toastId.current;
+    void lookupVocabulary(nextCandidate.word, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (!result) {
+          toast.update(id, {
+            type: "warning",
+            title: nextCandidate.word ?? "Word not found",
+            description: "No definition found. Try circling or underlining one word at a time.",
+            duration: 0,
+          });
+          return;
+        }
+        toast.update(id, {
+          type: "success",
+          title: result.word,
+          meta: [result.phonetic, result.partOfSpeech].filter(Boolean).join(" · "),
+          description: `${result.meaning}\n\nExample: ${result.example}`,
+          duration: 0,
+        });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          toast.update(id, {
+            type: "error",
+            title: "Definition unavailable",
+            description: "Could not fetch the definition. Circle or underline again to retry.",
+            duration: 0,
+          });
+      });
+  }, []);
+  const readGestureImage = useCallback(
+    async (gesture: WordGesture) => {
+      if (lookupStarted.current || gesture.word || !penActive.current) return;
+      const { x: left, y: top, width, height } = gesture.region;
+      const image = [...sceneElements.current]
+        .reverse()
+        .find(
+          (element) =>
+            !element.isDeleted &&
+            element.type === "image" &&
+            left + width / 2 >= element.x &&
+            left + width / 2 <= element.x + element.width &&
+            top + height / 2 >= element.y &&
+            top + height / 2 <= element.y + element.height,
+        );
+      if (image?.type !== "image" || !image.fileId) return;
+      const file = sceneFiles.current[image.fileId];
+      if (!file) return;
+      lookupStarted.current = true;
+      const controller = new AbortController();
+      lookupController.current = controller;
+      const id = toastId.current;
+      if (id)
+        toast.update(id, { type: "loading", description: "Reading selected word…", duration: 0 });
+      try {
+        const source = new Image();
+        source.src = file.dataURL;
+        await source.decode();
+        if (controller.signal.aborted) return;
+        const canvas = document.createElement("canvas");
+        const scale = Math.min(3, 640 / Math.max(width, height));
+        canvas.width = Math.ceil(width * scale);
+        canvas.height = Math.ceil(height * scale);
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Could not prepare the selected image region");
+        context.scale(scale, scale);
+        context.translate(image.x + image.width / 2 - left, image.y + image.height / 2 - top);
+        context.rotate(image.angle);
+        context.scale(image.scale[0], image.scale[1]);
+        const crop = image.crop;
+        context.drawImage(
+          source,
+          crop?.x ?? 0,
+          crop?.y ?? 0,
+          crop?.width ?? source.naturalWidth,
+          crop?.height ?? source.naturalHeight,
+          -image.width / 2,
+          -image.height / 2,
+          image.width,
+          image.height,
+        );
+        const response = await fetch("/api/ocr", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dataURL: canvas.toDataURL("image/png") }),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(9000)]),
+        });
+        if (!response.ok) {
+          const result = (await response.json()) as { error?: string };
+          throw new Error(
+            result.error ?? "Word lookup failed. Circle or underline again to retry.",
+          );
+        }
+        const { word } = (await response.json()) as OcrResponse;
+        if (controller.signal.aborted || !penActive.current) return;
+        if (!word) {
+          if (id)
+            toast.update(id, {
+              type: "warning",
+              title: "No readable word",
+              description: "Try circling or underlining the word more closely.",
+              duration: 0,
+            });
+          return;
+        }
+        // Cache the selected region in image-local coordinates, not viewport pixels.
+        if (image.angle === 0) {
+          const words = imageWords.current.get(image.fileId) ?? [];
+          imageWords.current.set(image.fileId, [
+            ...words,
+            {
+              word,
+              x: (left + width * 0.1 - image.x) / image.width,
+              y: (top + height * 0.1 - image.y) / image.height,
+              width: (width * 0.8) / image.width,
+              height: (height * 0.8) / image.height,
+            },
+          ]);
+          updateImageWords();
+        }
+        publishCandidate({ ...gesture, word });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (id)
+          toast.update(id, {
+            type: "error",
+            title: "Word lookup failed",
+            duration: 0,
+            description:
+              error instanceof Error ? error.message : "Circle or underline again to retry.",
+          });
+      }
+    },
+    [publishCandidate, updateImageWords],
+  );
+  const handleChange = useCallback(
+    (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
+      const isPen = appState.activeTool.type === "freedraw";
+      if (penActive.current && !isPen) {
+        gestureActive.current = false;
+        setDrawing(false);
+        sceneGesture.current = [];
+        window.clearTimeout(lookupTimer.current);
+        lookupController.current?.abort();
+        definitionController.current?.abort();
+        if (toast.getState().toasts.some((item) => item.type === "loading")) toast.dismiss();
+      }
+      penActive.current = isPen;
+      sceneElements.current = elements;
+      sceneFiles.current = files;
+      updateImageWords();
+      const gesture = appState.newElement;
+      if (isPen && gestureActive.current && gesture?.type === "freedraw" && !gesture.isDeleted) {
+        const points = gesture.points.map(
+          ([x, y]) => [gesture.x + x, gesture.y + y] as [number, number],
+        );
+        sceneGesture.current = points;
+        window.clearTimeout(lookupTimer.current);
+        const nextCandidate = detectWordGesture(elements, points, recognizedWords.current);
+        if (nextCandidate) {
+          if (nextCandidate.kind === "circle" || nextCandidate.word)
+            publishCandidate(nextCandidate);
+          if (
+            nextCandidate.kind === "circle" &&
+            !nextCandidate.word &&
+            nextCandidate.confidence >= 75
+          ) {
+            lookupTimer.current = window.setTimeout(() => {
+              void readGestureImage(nextCandidate);
+            }, 150);
+          }
+        }
+      }
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(() => {
+        void saveBoard(elements, files);
+      }, 500);
+    },
+    [publishCandidate, readGestureImage, updateImageWords],
+  );
+  const handlePointerDown = useCallback((activeTool: AppState["activeTool"]) => {
+    penActive.current = activeTool.type === "freedraw";
+    if (!penActive.current) return;
+    window.clearTimeout(lookupTimer.current);
+    lookupController.current?.abort();
+    lookupStarted.current = false;
+    gestureActive.current = true;
+    setDrawing(true);
+    sceneGesture.current = [];
+    definitionController.current?.abort();
+    if (toastId.current && toast.getState().toasts.some((item) => item.type === "loading")) {
+      toast.update(toastId.current, {
+        type: "info",
+        title: "Lookup cancelled",
+        description: "Draw a new circle or underline to look up a word.",
+        duration: 2500,
+      });
+    }
+    lastDetectedWord.current = undefined;
+    toastId.current = null;
+  }, []);
+  const handlePointerUp = useCallback(
+    (activeTool: AppState["activeTool"]) => {
+      if (activeTool.type !== "freedraw" || !penActive.current || !gestureActive.current) return;
+      window.clearTimeout(lookupTimer.current);
+      const nextCandidate = detectWordGesture(
+        sceneElements.current,
+        sceneGesture.current,
+        recognizedWords.current,
+      );
+      if (nextCandidate) {
+        publishCandidate(nextCandidate);
+        void readGestureImage(nextCandidate);
+      }
+      gestureActive.current = false;
+      setDrawing(false);
+      sceneGesture.current = [];
+    },
+    [publishCandidate, readGestureImage],
+  );
 
   useEffect(() => {
-    return () => window.clearTimeout(saveTimer.current);
+    toast.configure({ held: "replace" });
+    return () => {
+      window.clearTimeout(saveTimer.current);
+      window.clearTimeout(lookupTimer.current);
+      lookupController.current?.abort();
+      definitionController.current?.abort();
+      toast.dismiss();
+    };
   }, []);
 
   return (
@@ -48,11 +552,23 @@ function App() {
         <section className="canvas-stage" aria-label="Whiteboard canvas">
           <Excalidraw
             initialData={initialData}
-            onChange={(elements, _appState, files) => handleChange(elements, files)}
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
+            onChange={handleChange}
           />
         </section>
       </main>
-      {import.meta.env.DEV && <Agentation />}
+      <div
+        className="word-toaster"
+        data-drawing={drawing}
+        onPointerDownCapture={(event) => {
+          if (event.target instanceof Element && event.target.closest(".tst-desc")) {
+            event.stopPropagation();
+          }
+        }}
+      >
+        <Toaster position="bottom-right" theme="light" />
+      </div>
     </>
   );
 }

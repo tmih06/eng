@@ -1,0 +1,2 @@
+# Server-side only. Copy to .dev.vars and restart local development.
+GEMINI_API_KEY="replace-with-your-google-ai-studio-key"

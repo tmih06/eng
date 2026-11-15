@@ -13,6 +13,18 @@ Open `http://localhost:5173/`.
 
 The Cloudflare Vite plugin runs the Worker locally, including the Durable Object binding. Drawing changes are saved to local Worker storage after a short debounce.
 
+## Image OCR
+
+Importing an image does not start OCR. Circling or underlining a word with the Draw/pen tool sends only the selected region (at most 640 pixels on its longest side) through `POST /api/ocr` to Gemini 3.5 Flash-Lite. An underline selects the word directly above the stroke and works in either direction. Typed text is matched locally, including individual words in a sentence. Minimal thinking and a single-word response keep the image request small. The Worker validates the result. Open loops are supported; circle recognition starts when you pause or release the stroke, and image underlines are read on release so an unfinished line does not crop the wrong word.
+
+Recognized regions are cached for the page session and follow image moves/resizes, so repeating a circle or underline does not require another OCR request. Circles without images or words still show the detected state without making an OCR request. Lines on blank canvas, vertical/steep strokes, and typed-text strikethroughs do not trigger word lookup.
+
+Copy `.dev.vars.example` to `.dev.vars`, set `GEMINI_API_KEY`, and restart the dev server. `.dev.vars` is ignored by Git; never use a `VITE_` variable for this key. Gemini rate limits and account quotas apply; there is no paid-provider or local OCR fallback. Failed requests display an error and can be retried by circling or underlining again.
+
+Gesture detection, image reading, and dictionary results share one bottom-right Ding toast. It updates in place to show pronunciation, meaning, and an example; definitions stay visible until dismissed. Errors appear in the same toast, and long definitions can be scrolled.
+
+For production, configure `GEMINI_API_KEY` as a Cloudflare Worker secret with `bunx wrangler secret put GEMINI_API_KEY` before using image OCR. Local secrets are not deployed automatically.
+
 ## Deploy
 
 Authenticate with Wrangler, then run:
